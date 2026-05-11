@@ -1,5 +1,7 @@
 use std::fmt::Write;
 
+use unicode_width::UnicodeWidthChar;
+
 use crate::{
     nonprintable_notation::NonprintableNotation,
     vscreen::{EscapeSequenceOffsets, EscapeSequenceOffsetsIterator},
@@ -16,8 +18,9 @@ pub fn expand_tabs(line: &str, width: usize, cursor: &mut usize) -> String {
                 while let Some(index) = text.find('\t') {
                     // Add previous text.
                     if index > 0 {
-                        *cursor += index;
-                        buffer.push_str(&text[0..index]);
+                        let before_tab = &text[0..index];
+                        *cursor += str_width(before_tab);
+                        buffer.push_str(before_tab);
                     }
 
                     // Add tab.
@@ -29,7 +32,7 @@ pub fn expand_tabs(line: &str, width: usize, cursor: &mut usize) -> String {
                     text = &text[index + 1..text.len()];
                 }
 
-                *cursor += text.len();
+                *cursor += str_width(text);
                 buffer.push_str(text);
             }
             _ => {
@@ -40,6 +43,12 @@ pub fn expand_tabs(line: &str, width: usize, cursor: &mut usize) -> String {
     }
 
     buffer
+}
+
+fn str_width(s: &str) -> usize {
+    s.chars()
+        .map(|c| c.width().unwrap_or(if c.is_control() { 2 } else { 0 }))
+        .sum()
 }
 
 fn try_parse_utf8_char(input: &[u8]) -> Option<(char, usize)> {
@@ -326,4 +335,38 @@ fn test_sanitize_for_terminal_idempotent_on_sanitized() {
     assert_eq!(sanitize_for_terminal(&clean), clean);
     assert!(!clean.contains('\x1b'));
     assert!(!clean.contains('\x07'));
+}
+
+#[test]
+fn test_expand_tabs_ascii() {
+    let mut cursor = 0;
+    assert_eq!(expand_tabs("ab\tx", 8, &mut cursor), "ab      x");
+    assert_eq!(cursor, 9);
+}
+
+#[test]
+fn test_expand_tabs_multibyte_utf8() {
+    // "café" is 4 columns but 5 bytes; tab stop must align to column, not byte
+    let mut cursor = 0;
+    let result = expand_tabs("café\tx", 8, &mut cursor);
+    assert_eq!(result, "café    x");
+    assert_eq!(cursor, 9);
+}
+
+#[test]
+fn test_expand_tabs_cjk_fullwidth() {
+    // "a日" is 3 columns (1 + 2) but 4 bytes; tab should produce 5 spaces
+    let mut cursor = 0;
+    let result = expand_tabs("a日\tx", 8, &mut cursor);
+    assert_eq!(result, "a日     x");
+    assert_eq!(cursor, 9);
+}
+
+#[test]
+fn test_expand_tabs_multiple_tabs() {
+    let mut cursor = 0;
+    let result = expand_tabs("café\tà\tx", 8, &mut cursor);
+    // "café" = 4 cols → tab to 8 (4 spaces) → "à" = 1 col at col 8 → tab to 16 (7 spaces)
+    assert_eq!(result, "café    à       x");
+    assert_eq!(cursor, 17);
 }
