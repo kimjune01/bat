@@ -47,7 +47,7 @@ pub fn expand_tabs(line: &str, width: usize, cursor: &mut usize) -> String {
 
 fn str_width(s: &str) -> usize {
     s.chars()
-        .map(|c| c.width().unwrap_or(if c.is_control() { 2 } else { 0 }))
+        .map(|c| c.width().unwrap_or(0))
         .sum()
 }
 
@@ -369,4 +369,15 @@ fn test_expand_tabs_multiple_tabs() {
     // "café" = 4 cols → tab to 8 (4 spaces) → "à" = 1 col at col 8 → tab to 16 (7 spaces)
     assert_eq!(result, "café    à       x");
     assert_eq!(cursor, 17);
+}
+
+#[test]
+fn test_expand_tabs_with_control_char() {
+    // Control characters are treated as zero-width for tab alignment purposes
+    // since they're typically invisible in terminal output (not in --show-all mode)
+    let mut cursor = 0;
+    let result = expand_tabs("a\x01b\tx", 8, &mut cursor);
+    // "a" = 1 col, "\x01" = 0 cols (invisible), "b" = 1 col → at column 2 → tab to 8 (6 spaces)
+    assert_eq!(result, "a\x01b      x");
+    assert_eq!(cursor, 9);
 }
