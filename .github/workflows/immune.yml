@@ -29,7 +29,7 @@ jobs:
       verdict: ${{ steps.run.outputs.verdict }}
     steps:
       - id: run
-        uses: kimjune01/immune/filter@v0.3
+        uses: kimjune01/immune/filter@v0.3.1
         with:
           mode: advisory
 
@@ -72,7 +72,7 @@ jobs:
             sleep 20
           done
 
-      - uses: kimjune01/immune/attend@v0.3
+      - uses: kimjune01/immune/attend@v0.3.1
         with:
           agent: gemini
           hg-fanout: '3'
