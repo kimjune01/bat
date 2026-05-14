@@ -223,12 +223,15 @@ impl FromStr for StyleComponentList {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self> {
-        Ok(StyleComponentList(
-            s.split(",")
-                .map(ComponentAction::extract_from_str) // If the component starts with "-", it's meant to be removed
-                .map(|(a, s)| Ok((a, StyleComponent::from_str(s)?)))
-                .collect::<Result<Vec<(ComponentAction, StyleComponent)>>>()?,
-        ))
+        let parsed = s
+            .split(',')
+            .map(ComponentAction::extract_from_str)
+            .map(|(a, component_str)| {
+                StyleComponent::from_str(component_str).map(|component| (a, component))
+            })
+            .collect::<Result<Vec<(ComponentAction, StyleComponent)>>>()?;
+
+        Ok(StyleComponentList(parsed))
     }
 }
 
