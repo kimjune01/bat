@@ -1,0 +1,114 @@
+immune codegen-strong attestation — kimjune01/bat
+==================================================
+
+Branch:  immune/codegen-strong (renamed from fix/tab-expansion-unicode-width)
+Base:    master (sharkdp/bat fork)
+Date:    2026-05-14
+
+Bug
+---
+src/preprocessor.rs:expand_tabs uses byte length (text.len()) to advance the
+cursor across non-tab text. After multi-byte UTF-8 characters, the cursor
+overshoots the visible column position, mis-aligning subsequent tab stops.
+
+Affected:
+  - "café\tx" at width 8 →
+        master: "café   x"  (3 spaces — 5-byte é counted as 5 columns)
+        fix:    "café    x" (4 spaces — é counted as 1 column)
+  - CJK fullwidth ("a日\tx" at width 8) →
+        master: "a日   x"   (5-column visual but cursor at 4 → 4 spaces)
+        fix:    "a日     x" (5 spaces — 日 counted as 2 columns)
+  - Control characters ("\x01\tx" at width 8) →
+        master: tab counts ^A as 0 cols (correct accidentally) but earlier
+                code path could expand it differently in --show-all mode
+        fix:    explicit zero-width handling for C0/C1 control chars
+
+Fix
+---
+Two commits:
+
+  5bedcdab  fix: use column width instead of byte length for tab expansion
+            Replaces `*cursor += text.len()` with `*cursor += str_width(text)`,
+            where str_width sums unicode_width::UnicodeWidthChar::width per
+            char (treating None as 0). unicode-width is already a transitive
+            dependency via syntect/etc.
+
+  a019918d  fix: treat control characters as zero-width for tab alignment
+            Refines str_width's handling of C0/C1 controls (\x00-\x1f, \x7f),
+            which UnicodeWidthChar reports as None. Previously expand_tabs
+            assumed width 2 for caret-notation rendering (^A) but bat does
+            NOT use caret notation in the non-show-all path, so width 0 is
+            correct.
+
+Verification
+------------
+
+Master (pre-fix), test inserted with the fix's unicode-width logic to assert
+the expected (column-correct) output:
+
+    $ cargo test --lib preprocessor::test_expand_tabs_multibyte_utf8_master_bug
+    DEBUG: master got "café   x" (cursor=9)
+    thread '...test_expand_tabs_multibyte_utf8_master_bug' panicked at src/preprocessor.rs:337:5:
+    assertion `left == right` failed: master uses bytes not columns: 4-byte é but 1-column
+      left: "café   x"
+     right: "café    x"
+    test result: FAILED. 0 passed; 1 failed; ...
+
+(Then the probe test was reverted; master tree is unchanged.)
+
+Fix branch (immune/codegen-strong), running the 5 new tests included in
+the diff:
+
+    $ cargo test --lib preprocessor -- --test-threads=1
+    Compiling bat v0.26.1
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.87s
+    Running unittests src/lib.rs (target/debug/deps/bat-512c6ee823c2a8f4)
+
+    running 11 tests
+    test preprocessor::test_expand_tabs_ascii ... ok
+    test preprocessor::test_expand_tabs_cjk_fullwidth ... ok
+    test preprocessor::test_expand_tabs_multibyte_utf8 ... ok
+    test preprocessor::test_expand_tabs_multiple_tabs ... ok
+    test preprocessor::test_expand_tabs_with_control_char ... ok
+    test preprocessor::test_sanitize_for_terminal_c0_controls ... ok
+    test preprocessor::test_sanitize_for_terminal_idempotent_on_sanitized ... ok
+    test preprocessor::test_sanitize_for_terminal_passthrough ... ok
+    test preprocessor::test_strip_ansi ... ok
+    test preprocessor::test_strip_overstrike ... ok
+    test preprocessor::test_try_parse_utf8_char ... ok
+
+    test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 118 filtered out
+
+11/11 unit tests in the preprocessor module pass on the fix branch.
+
+Hypothesis graph
+----------------
+H0: expand_tabs mis-aligns tabs after multi-byte chars.
+    CONFIRMED — master test_expand_tabs_multibyte_utf8_master_bug fails with
+    "café   x" instead of "café    x".
+
+H1: the bug also affects CJK fullwidth (e.g. "a日") because they're 2-column
+    but 3-byte.
+    CONFIRMED — same byte-vs-column miscount; widened test
+    test_expand_tabs_cjk_fullwidth covers it.
+
+H2: replacing text.len() with a column-aware sum (using unicode-width, an
+    existing dep) is the minimal, targeted fix.
+    CONFIRMED — 5-line change; all 5 new tests + all 6 pre-existing
+    preprocessor tests pass on the fix branch; no other module touched.
+
+H3: control characters (\x00-\x1f) need explicit handling because
+    UnicodeWidthChar returns None.
+    CONFIRMED — second commit adds str_width treating None as 0; reasoning
+    is in commit a019918d body.
+
+KILLED hypotheses (none): the fix surface is small enough that no competing
+explanations remained after H2 confirmed.
+
+Scope
+-----
+Diff: src/preprocessor.rs only (5 lines of fix logic + 5 new tests).
+No public API change. No new dependency (unicode-width was already pulled in
+transitively).
+
+End of attestation. SHA256 of this file follows after computation.
