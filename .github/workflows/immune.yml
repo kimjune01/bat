@@ -1,0 +1,46 @@
+# Rendered by /immunize on 2026-05-14 from kimjune01/immune/examples/minimal-workflow.yml
+#
+# Detection signals → knobs:
+#   team repo (sharkdp 62%, keith-hall+dependabot 30%) + low closure (14%) → mode: advisory
+#   no AGENTS.md / CONTRIBUTING.md prohibition                              → install allowed
+#   language Rust                                                           → replay-friendly (T3 not yet shipped)
+#   user picked gemini agent                                                → agent: gemini
+#   no GEMINI_API_KEY secret on this fork yet                               → set it before attend can run
+#
+# Permissions are minimal: contents:read, pull-requests:write, issues:write.
+# No contents:write, no actions:write. Action token cannot push code or modify
+# the repo beyond labels and PR comments.
+
+name: immune
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  pull_request_target:
+    types: [labeled]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  filter:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: kimjune01/immune/filter@v0.1
+        with:
+          mode: advisory  # `gate` would auto-close on T0/T1 reject
+
+  attend:
+    if: >
+      github.event_name == 'pull_request_target' &&
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'immune:t1-pass'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: kimjune01/immune/attend@v0.1
+        with:
+          agent: gemini
+          hg-fanout: '3'
+          gemini-api-key: ${{ secrets.GEMINI_API_KEY }}
