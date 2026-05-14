@@ -1,45 +1,78 @@
-# Rendered by /immunize on 2026-05-14 from kimjune01/immune/examples/minimal-workflow.yml
+# Rendered by /immunize on 2026-05-14 (v0.3 shape)
 #
-# Detection signals → knobs:
-#   team repo (sharkdp 62%, keith-hall+dependabot 30%) + low closure (14%) → mode: advisory
-#   no AGENTS.md / CONTRIBUTING.md prohibition                              → install allowed
-#   language Rust                                                           → replay-friendly (T3 not yet shipped)
-#   user picked gemini agent                                                → agent: gemini
-#   no GEMINI_API_KEY secret on this fork yet                               → set it before attend can run
+# One workflow, two jobs:
+#   filter (cheap, ~seconds, no LLM) → label immune:reject if it rejects
+#   attend (LLM, ~$0.05/PR via gemini) → wait for CI green, then synthesize
 #
-# Permissions are minimal: contents:read, pull-requests:write, issues:write.
-# No contents:write, no actions:write. Action token cannot push code or modify
-# the repo beyond labels and PR comments.
+# Labels are TERMINAL-ONLY: immune:reject / immune:trusted / immune:suspect.
+# Run-state is conveyed by GHA-native check_runs, not labels.
+#
+# OPTIONAL: to save your CI runner-minutes on filter-rejected spam, add this
+# one line to YOUR existing CI workflow's job(s):
+#   if: "!contains(github.event.pull_request.labels.*.name, 'immune:reject')"
 
 name: immune
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
   pull_request_target:
-    types: [labeled]
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: read
   pull-requests: write
   issues: write
+  checks: read
 
 jobs:
   filter:
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    outputs:
+      verdict: ${{ steps.run.outputs.verdict }}
     steps:
-      - uses: kimjune01/immune/filter@v0.2
+      - id: run
+        uses: kimjune01/immune/filter@v0.3
         with:
-          mode: advisory  # `gate` would auto-close on T0/T1 reject
+          mode: advisory
 
   attend:
-    if: >
-      github.event_name == 'pull_request_target' &&
-      github.event.action == 'labeled' &&
-      github.event.label.name == 'immune:t1-pass'
+    needs: filter
+    if: needs.filter.outputs.verdict == 'pass'
     runs-on: ubuntu-latest
     steps:
-      - uses: kimjune01/immune/attend@v0.2
+      - name: Wait for maintainer CI (transparent ~20-line poll, no external action deps)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
+          THIS_WORKFLOW: ${{ github.workflow }}
+        run: |
+          set -euo pipefail
+          while true; do
+            checks=$(gh api --paginate "repos/${REPO}/commits/${PR_SHA}/check-runs")
+            pending=$(echo "$checks" | jq --arg w "$THIS_WORKFLOW" '
+              [.check_runs[]
+                 | select(.name != $w)
+                 | select(.name | startswith($w + " /") | not)
+                 | select(.status != "completed")
+              ] | length')
+            failures=$(echo "$checks" | jq --arg w "$THIS_WORKFLOW" '
+              [.check_runs[]
+                 | select(.name != $w)
+                 | select(.name | startswith($w + " /") | not)
+                 | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out")
+              ] | length')
+            if [ "$failures" -gt 0 ]; then
+              echo "::notice::Maintainer CI failed/cancelled — attend exits silently"
+              exit 0
+            fi
+            if [ "$pending" -eq 0 ]; then
+              echo "All maintainer CI checks completed successfully — proceeding to attend"
+              break
+            fi
+            echo "Waiting on $pending pending check(s)..."
+            sleep 20
+          done
+
+      - uses: kimjune01/immune/attend@v0.3
         with:
           agent: gemini
           hg-fanout: '3'
