@@ -28,7 +28,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: kimjune01/immune/filter@v0.1
+      - uses: kimjune01/immune/filter@v0.2
         with:
           mode: advisory  # `gate` would auto-close on T0/T1 reject
 
@@ -39,7 +39,7 @@ jobs:
       github.event.label.name == 'immune:t1-pass'
     runs-on: ubuntu-latest
     steps:
-      - uses: kimjune01/immune/attend@v0.1
+      - uses: kimjune01/immune/attend@v0.2
         with:
           agent: gemini
           hg-fanout: '3'
